@@ -6,6 +6,40 @@ using System.Net; // For generating HTTP requests and getting responses.
 using NiceHashBotLib; // Include this for Order class, which contains stats for our order.
 using Newtonsoft.Json; // For JSON parsing of remote APIs.
 
+
+	public class CoinInfo
+	{
+		public Int64 blocks { get; set; }
+		public double price { get; set;}
+		public int currentblocksize { get; set; }
+		public int currentblocktx { get; set; }
+		public double difficulty { get; set; }
+		public string errors { get; set; }
+		public int genproclimit { get; set; }
+		public Int64 networkhashps { get; set; }
+		public int pooledtx { get; set; }
+		public bool testnet { get; set; }
+		public string chain { get; set; }
+		public bool generate { get; set; }
+		public Int64 hashespersec { get; set; }	
+	}
+
+	public class Ticker{
+		public double buy{ get; set;}
+		public double high{ get; set;}
+		public double last{ get; set;}
+		public double low{ get; set;}
+		public double sell{ get; set;}
+		public double vol{ get; set;}
+	}
+
+	public class BTCInfo{
+		//{"date":"1462265434","ticker":{"buy":"2891.14","high":"2899.14","last":"2891.14","low":"2852.7","sell":"2891.25","vol":"893315.464"}}
+		public Int64 data{get; set;}
+		public Ticker ticker{ get; set; }
+	}
+
+
 public class HandlerClass
 {
     /// <summary>
@@ -23,77 +57,61 @@ public class HandlerClass
         if (OrderStats == null) return;
 
         // Retreive JSON data from API server. Replace URL with your own API request URL.
-        string JSONData = GetHTTPResponseInJSON("http://www.coinwarz.com/v1/api/coininformation/?apikey=<API_KEY>&cointag=<COIN>");
-        if (JSONData == null) return;
-
-        // Serialize returned JSON data.
-        CoinwarzResponse Response;
-        try
-        {
-            Response = JsonConvert.DeserializeObject<CoinwarzResponse>(JSONData);
-        }
-        catch
-        {
-            return;
-        }
-
-        // Check if exchange rate is provided - at least one exchange must be included.
-        if (Response.Data.ExchangeRates.Length == 0) return;
-        double ExchangeRate = Response.Data.ExchangeRates[0].ToBTC;
-
-        // Calculate mining profitability in BTC per 1 TH of hashpower.
-        double HT = Response.Data.Difficulty * (Math.Pow(2.0, 32) / (1000000000000.0));
-        double CPD = Response.Data.BlockReward * 24.0 * 3600.0 / HT;
-        double C = CPD * ExchangeRate;
+		string jsonstring=GetHTTPResponseInJSON("http://220.178.235.84:5180/kpc"); 
+		CoinInfo ci = (CoinInfo)Newtonsoft.Json.JsonConvert.DeserializeObject<CoinInfo> (jsonstring);
+		Console.WriteLine ("开始计算..");
+		double nethashG = ci.networkhashps / 1000000000.0;
+		double hashpercent = 1 / nethashG;
+		float poolfee = 0.1f;
+		float saferadio = 0.93f;
+		float nicehash_fee = 0.03f;
+		double blockreward = 250 * (1 - poolfee);
+		double btcprice = GetBTCPrice ();
+		double coinprice = ci.price ; //btc price
+		double coinpriceBTC=coinprice / btcprice;
+		int blocktime = 60; //seconds
+		double coinperday = blockreward * 3600 * 24 / blocktime;
+		double coinperdayperG = coinperday * hashpercent;
+		double btcperdayperG = coinperdayperG * coinpriceBTC;
+		btcperdayperG = btcperdayperG * (1 - nicehash_fee) * saferadio;
+		double rmbperdayperG = btcperdayperG * btcprice;
+		Console.WriteLine ("saferadio:"+saferadio.ToString("00%"));
+		Console.WriteLine ("nethash:"+nethashG.ToString("F2")+"GH");
+		Console.WriteLine ("coinprice:"+coinprice.ToString("F4")+" RMB");
+		Console.WriteLine ("btcprice:"+btcprice.ToString("F4")+" RMB [FROM OKCOIN.CN]");
+		Console.WriteLine ("coinpriceBTC:"+coinpriceBTC.ToString("F8")+" BTC");
+		Console.WriteLine ("blockreward:"+blockreward.ToString("F4") +" KPC");
+		Console.WriteLine ("coinperday:"+coinperday.ToString("F4") +" KPC");
+		Console.WriteLine ("coinperdayperG:"+coinperdayperG.ToString("F4") +" KPC");
+		Console.WriteLine ("btcperdayperG:"+btcperdayperG.ToString("F8") +" BTC");
+		Console.WriteLine ("rmbperdayperG:"+rmbperdayperG.ToString("F4") +" RMB");
 
         // Subtract service fees.
-        C -= 0.04 * C;
+		btcperdayperG -= 0.04 * btcperdayperG;
 
         // Subtract minimal % profit we want to get.
-        C -= 0.01 * C;
+		btcperdayperG -= 0.01 * btcperdayperG;
 
         // Set new maximal price.
-        MaxPrice = Math.Floor(C * 10000) / 10000;
+		MaxPrice = Math.Floor(btcperdayperG * 10000) / 10000;
 
         // Example how to print some data on console...
         Console.WriteLine("Adjusting order #" + OrderStats.ID.ToString() + " maximal price to: " + MaxPrice.ToString("F4"));
     }
+
+
+		private static double GetBTCPrice(){
+			string jsondata = GetHTTPResponseInJSON ("https://www.okcoin.cn/api/v1/ticker.do?symbol=btc_cny");
+			BTCInfo btcinfo=(BTCInfo)Newtonsoft.Json.JsonConvert.DeserializeObject<BTCInfo> (jsondata);
+			return btcinfo.ticker.buy;
+		}
 
     /// <summary>
     /// Data structure used for serializing JSON response from CoinWarz. 
     /// It allows us to parse JSON with one line of code and easily access every data contained in JSON message.
     /// </summary>
     #pragma warning disable 0649
-    class CoinwarzResponse
-    {
-        public bool Success;
-        public string Message;
-        
-        public class DataStruct
-        {
-            public string CoinName;
-            public string CoinTag;
-            public int BlockCount;
-            public double Difficulty;
-            public double BlockReward;
-            public bool IsBlockExplorerOnline;
-            public bool IsExchangeOnline;
-            public string Algorithm;
-            public class ExchangeRateStruct
-            {
-                public string Exchange;
-                public double ToUSD;
-                public double ToBTC;
-                public double Volume;
-                public double TimeStamp;
-            }
-            public ExchangeRateStruct[] ExchangeRates;
-            public double BlockTimeInSeconds;
-            public string HealthStatus;
-            public string Message;
-        }
-        public DataStruct Data;
-    }
+
     #pragma warning restore 0649
 
 
